@@ -38,6 +38,17 @@ st.markdown("""
     font-weight: 600;
     margin-left: 6px;
     vertical-align: middle;
+/* Botón primario en azul marino corporativo */
+.stButton > button[kind="primary"] {
+    background-color: #1b3a6b;
+    border-color: #1b3a6b;
+    color: white;
+}
+.stButton > button[kind="primary"]:hover {
+    background-color: #14306b;
+    border-color: #14306b;
+    color: white;
+}
 }
 </style>
 """, unsafe_allow_html=True)
