@@ -1,5 +1,5 @@
 """
-Generador de Contratos de Financiación v2
+Generador de Contratos de Financiación v3
 Streamlit app — plantilla Word con marcadores «» + Excel estructurado por producción
 Con sistema de login por contraseña via Streamlit Secrets
 """
@@ -12,11 +12,12 @@ import re
 import tempfile
 import hashlib
 from datetime import date, datetime
+from pathlib import Path
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Generador de Contratos",
-    page_icon="📄",
+    page_title="VCapital · Contratos",
+    page_icon="assets/favicon.ico",        # ICO en carpeta assets/
     layout="centered"
 )
 
@@ -34,12 +35,15 @@ def check_password(password: str) -> bool:
         return False
 
 def login_screen():
-    st.title("🔐 Acceso Restringido")
-    st.markdown("Esta aplicación es de uso privado. Introduce la contraseña para continuar.")
-    st.divider()
-
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
+    # Logo centrado en login
+    col_l, col_c, col_r = st.columns([1, 2, 1])
+    with col_c:
+        logo_path = Path("assets/logo_vcapital.png")
+        if logo_path.exists():
+            st.image(str(logo_path), use_container_width=True)
+        st.markdown("---")
+        st.markdown("### 🔐 Acceso Restringido")
+        st.markdown("Esta aplicación es de uso privado. Introduce la contraseña para continuar.")
         password = st.text_input("Contraseña", type="password", key="pwd_input")
         if st.button("Entrar", type="primary", use_container_width=True):
             if check_password(password):
@@ -64,16 +68,22 @@ if not st.session_state["authenticated"]:
 # APP (only shown after login)
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Header with logout button
-col_title, col_logout = st.columns([5, 1])
+# ── Header: logo + título + botón salir ───────────────────────────────────────
+col_logo, col_title, col_logout = st.columns([1, 4, 1])
+with col_logo:
+    logo_path = Path("assets/logo_vcapital.png")
+    if logo_path.exists():
+        st.image(str(logo_path), use_container_width=True)
 with col_title:
-    st.title("📄 Generador de Contratos de Financiación")
+    st.title("Generador de Contratos")
+    st.markdown("Genera contratos Word rellenos automáticamente a partir de la plantilla y el Excel de la producción.")
 with col_logout:
+    st.write("")
     st.write("")
     if st.button("🚪 Salir"):
         logout()
 
-st.markdown("Genera contratos Word rellenos automáticamente a partir de la plantilla y el Excel de la producción.")
+st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — XML replacement
@@ -289,20 +299,84 @@ def read_clientes_pj(xls: pd.ExcelFile) -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# UI
+# HELPER — listar plantillas disponibles en carpeta plantillas/
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_plantillas_disponibles() -> list[str]:
+    """Devuelve lista de nombres de .docx en la carpeta plantillas/."""
+    plantillas_dir = Path("plantillas")
+    if not plantillas_dir.exists():
+        return []
+    return sorted([f.name for f in plantillas_dir.glob("*.docx")])
+
+
+def load_plantilla_bytes(nombre: str) -> bytes | None:
+    """Lee una plantilla de la carpeta plantillas/ y devuelve sus bytes."""
+    path = Path("plantillas") / nombre
+    if path.exists():
+        return path.read_bytes()
+    return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UI — Paso 1: Plantilla Word
 # ══════════════════════════════════════════════════════════════════════════════
 
 col1, col2 = st.columns(2)
+
 with col1:
     st.subheader("1️⃣ Plantilla Word")
-    template_file = st.file_uploader("Sube la plantilla del contrato (.docx)",
-                                     type=["docx"], key="template")
+
+    plantillas_disponibles = get_plantillas_disponibles()
+
+    if plantillas_disponibles:
+        # Opciones: las plantillas del repo + opción de subir una propia
+        opciones_plantilla = ["📁 Selecciona una plantilla…"] + plantillas_disponibles + ["⬆️ Subir plantilla propia…"]
+        seleccion_plantilla = st.selectbox(
+            "Elige la plantilla del contrato:",
+            opciones_plantilla,
+            key="sel_plantilla"
+        )
+        if seleccion_plantilla == "⬆️ Subir plantilla propia…":
+            template_file = st.file_uploader(
+                "Sube tu plantilla (.docx)",
+                type=["docx"],
+                key="template_upload"
+            )
+            template_bytes = template_file.read() if template_file else None
+            template_name  = template_file.name if template_file else None
+        elif seleccion_plantilla == "📁 Selecciona una plantilla…":
+            template_bytes = None
+            template_name  = None
+        else:
+            template_bytes = load_plantilla_bytes(seleccion_plantilla)
+            template_name  = seleccion_plantilla
+            if template_bytes:
+                st.success(f"✅ Plantilla cargada: **{seleccion_plantilla}**")
+    else:
+        # No hay plantillas en el repo → solo upload
+        st.caption("No hay plantillas guardadas en la carpeta `plantillas/`. Sube una manualmente.")
+        template_file  = st.file_uploader(
+            "Sube la plantilla del contrato (.docx)",
+            type=["docx"],
+            key="template_upload_fallback"
+        )
+        template_bytes = template_file.read() if template_file else None
+        template_name  = template_file.name if template_file else None
+
 with col2:
     st.subheader("2️⃣ Excel de la producción")
-    excel_file = st.file_uploader("Sube el Excel de la producción (.xlsx)",
-                                  type=["xlsx"], key="excel")
+    excel_file = st.file_uploader(
+        "Sube el Excel de la producción (.xlsx)",
+        type=["xlsx"],
+        key="excel"
+    )
 
 st.divider()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UI — Paso 2 y 3: Datos del Excel y selección de cliente
+# ══════════════════════════════════════════════════════════════════════════════
 
 prod_data = None
 df_pf     = pd.DataFrame()
@@ -375,12 +449,12 @@ if prod_data and (not df_pf.empty or not df_pj.empty):
 
     st.divider()
 
-    if template_file:
+    if template_bytes:
         if st.button("⚡ Generar Contrato", type="primary", use_container_width=True):
             with st.spinner("Generando contrato..."):
                 try:
                     reps       = build_replacements(prod_data, cliente_dict, tipo_sel)
-                    docx_bytes = generate_contract(template_file.read(), reps)
+                    docx_bytes = generate_contract(template_bytes, reps)
 
                     nombre_f = (cliente_dict.get("nombre","cliente") if tipo_sel == "PF"
                                 else cliente_dict.get("nombre_empresa","empresa")).replace(" ","_")
@@ -401,7 +475,7 @@ if prod_data and (not df_pf.empty or not df_pj.empty):
                     import traceback
                     st.code(traceback.format_exc())
     else:
-        st.info("⬆️ Sube la plantilla Word para poder generar el contrato.")
+        st.info("⬆️ Selecciona o sube la plantilla Word para poder generar el contrato.")
 
 elif excel_file and not prod_data:
     st.warning("No se encontraron datos en la hoja PRODUCTORA. Revisa que la fila 4 esté rellena.")
