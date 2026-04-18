@@ -127,6 +127,14 @@ with st.sidebar:
             mime="text/csv",
             use_container_width=True
         )
+        # ── Footer del sidebar ────────────────────────────────────────────────────
+        st.markdown("---")
+        st.caption("**v6.0** · Desarrollado por")
+        st.markdown(
+            "<small>Marc Mestres Mejías<br>"
+            "<a href='mailto:m.mestres87@gmail.com'>m.mestres87@gmail.com</a></small>",
+            unsafe_allow_html=True
+        )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HEADER — compacto (header en lugar de title)
