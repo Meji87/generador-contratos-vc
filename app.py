@@ -97,12 +97,7 @@ with st.sidebar:
         st.image(str(logo_path), use_container_width=True)
     st.markdown("---")
 
-    if st.button("🚪 Cerrar sesión", use_container_width=True):
-        logout()
-
-    st.markdown("---")
-
-    # Historial siempre visible en sidebar
+    # ── Historial ─────────────────────────────────────────────────────────────
     n_hist = len(st.session_state["historial"])
     if n_hist == 0:
         st.caption("📋 Sin contratos generados aún.")
@@ -113,7 +108,6 @@ with st.sidebar:
             unsafe_allow_html=True
         )
         df_hist = pd.DataFrame(st.session_state["historial"])
-        # Mostrar solo columnas relevantes en sidebar (compacto)
         st.dataframe(
             df_hist[["Hora", "Cliente", "Producción"]],
             use_container_width=True,
@@ -127,14 +121,23 @@ with st.sidebar:
             mime="text/csv",
             use_container_width=True
         )
-        # ── Footer del sidebar ────────────────────────────────────────────────────
-        st.markdown("---")
-        st.caption("**v6.0** · Desarrollado por")
-        st.markdown(
-            "<small>Marc Mestres Mejías<br>"
-            "<a href='mailto:m.mestres87@gmail.com'>m.mestres87@gmail.com</a></small>",
-            unsafe_allow_html=True
-        )
+
+    # ── Espaciador — empuja footer y botón al fondo ───────────────────────────
+    st.markdown("<div style='margin-top: 3rem;'></div>", unsafe_allow_html=True)
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.caption("**v6.0** · Desarrollado por")
+    st.markdown(
+        "<small>Marc Mestres Mejias<br>"
+        "<a href='mailto:m.mestres87@gmail.com'>m.mestres87@gmail.com</a></small>",
+        unsafe_allow_html=True
+    )
+    st.markdown("---")
+
+    # ── Cerrar sesión — siempre al fondo ──────────────────────────────────────
+    if st.button("🚪 Cerrar sesión", use_container_width=True):
+        logout()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HEADER — compacto (header en lugar de title)
@@ -482,7 +485,7 @@ def mostrar_datos_cliente(row, tipo: str):
                 str(row["cp_localidad"]),
                 f"{fmt_euros(row['importe_num'])}  ·  {row['importe_letras']}",
                 f"{fmt_euros(row['deduccion_num'])}  ·  {row['deduccion_letras']}",
-                str(row["fecha"]),
+                parse_fecha(row["fecha"]).strftime("%d/%m/%Y"),
             ]
         }
     else:
@@ -500,7 +503,7 @@ def mostrar_datos_cliente(row, tipo: str):
                 str(row["cp_localidad_empresa"]),
                 f"{fmt_euros(row['importe_num'])}  ·  {row['importe_letras']}",
                 f"{fmt_euros(row['deduccion_num'])}  ·  {row['deduccion_letras']}",
-                str(row["fecha"]),
+                parse_fecha(row["fecha"]).strftime("%d/%m/%Y"),
             ]
         }
     st.dataframe(
