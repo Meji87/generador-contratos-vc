@@ -67,39 +67,39 @@ def check_password(password: str) -> bool:
     except Exception:
         return False
 
-def login_screen():
-    st.markdown("<div style='max-width: 480px; margin: 0 auto;'>", unsafe_allow_html=True)
-    logo_path = Path("assets/logo_vcapital.png")
-    if logo_path.exists():
-        st.image(str(logo_path), use_container_width=True)
-    st.markdown("---")
-    st.markdown("### 🔐 Acceso Restringido")
-    st.markdown("Esta aplicación es de uso privado. Introduce la contraseña para continuar.")
-    password = st.text_input("Contraseña", type="password", key="pwd_input")
-    if st.button("Entrar", type="primary", use_container_width=True):
-        if check_password(password):
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("❌ Contraseña incorrecta. Inténtalo de nuevo.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
 # def login_screen():
-#     col_l, col_c, col_r = st.columns([1, 3, 1])
-#     with col_c:
-#         logo_path = Path("assets/logo_vcapital.png")
-#         if logo_path.exists():
-#             st.image(str(logo_path), use_container_width=True)
-#         st.markdown("---")
-#         st.markdown("### 🔐 Acceso Restringido")
-#         st.markdown("Esta aplicación es de uso privado. Introduce la contraseña para continuar.")
-#         password = st.text_input("Contraseña", type="password", key="pwd_input")
-#         if st.button("Entrar", type="primary", use_container_width=True):
-#             if check_password(password):
-#                 st.session_state["authenticated"] = True
-#                 st.rerun()
-#             else:
-#                 st.error("❌ Contraseña incorrecta. Inténtalo de nuevo.")
+#     st.markdown("<div style='max-width: 480px; margin: 0 auto;'>", unsafe_allow_html=True)
+#     logo_path = Path("assets/logo_vcapital.png")
+#     if logo_path.exists():
+#         st.image(str(logo_path), use_container_width=True)
+#     st.markdown("---")
+#     st.markdown("### 🔐 Acceso Restringido")
+#     st.markdown("Esta aplicación es de uso privado. Introduce la contraseña para continuar.")
+#     password = st.text_input("Contraseña", type="password", key="pwd_input")
+#     if st.button("Entrar", type="primary", use_container_width=True):
+#         if check_password(password):
+#             st.session_state["authenticated"] = True
+#             st.rerun()
+#         else:
+#             st.error("❌ Contraseña incorrecta. Inténtalo de nuevo.")
+#     st.markdown("</div>", unsafe_allow_html=True)
+
+def login_screen():
+    col_l, col_c, col_r = st.columns([1, 3, 1])
+    with col_c:
+        logo_path = Path("assets/logo_vcapital.png")
+        if logo_path.exists():
+            st.image(str(logo_path), use_container_width=True)
+        st.markdown("---")
+        st.markdown("### 🔐 Acceso Restringido")
+        st.markdown("Esta aplicación es de uso privado. Introduce la contraseña para continuar.")
+        password = st.text_input("Contraseña", type="password", key="pwd_input")
+        if st.button("Entrar", type="primary", use_container_width=True):
+            if check_password(password):
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("❌ Contraseña incorrecta. Inténtalo de nuevo.")
 
 def logout():
     st.session_state["authenticated"] = False
