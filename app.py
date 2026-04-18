@@ -68,7 +68,7 @@ def check_password(password: str) -> bool:
         return False
 
 def login_screen():
-    col_l, col_c, col_r = st.columns([1, 2, 1])
+    col_l, col_c, col_r = st.columns([1, 3, 1])
     with col_c:
         logo_path = Path("assets/logo_vcapital.png")
         if logo_path.exists():
