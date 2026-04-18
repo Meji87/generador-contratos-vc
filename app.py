@@ -27,6 +27,7 @@ st.markdown("""
 <style>
 /* Reduce top padding so the sidebar header sits higher */
 [data-testid="stSidebar"] > div:first-child { padding-top: 1.5rem; }
+
 /* Badge pill reutilizable */
 .badge {
     display: inline-block;
@@ -38,17 +39,18 @@ st.markdown("""
     font-weight: 600;
     margin-left: 6px;
     vertical-align: middle;
-/* Botón primario en azul marino corporativo */
-.stButton > button[kind="primary"] {
-    background-color: #1b3a6b;
-    border-color: #1b3a6b;
-    color: white;
 }
-.stButton > button[kind="primary"]:hover {
-    background-color: #14306b;
-    border-color: #14306b;
-    color: white;
+
+/* Botones primarios en azul marino corporativo */
+.stButton > button[data-testid="baseButton-primary"] {
+    background-color: #1b3a6b !important;
+    border-color: #1b3a6b !important;
+    color: white !important;
 }
+.stButton > button[data-testid="baseButton-primary"]:hover {
+    background-color: #142f5e !important;
+    border-color: #142f5e !important;
+    color: white !important;
 }
 </style>
 """, unsafe_allow_html=True)
