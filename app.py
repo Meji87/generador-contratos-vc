@@ -157,7 +157,7 @@ with st.sidebar:
 
     # ── Footer ────────────────────────────────────────────────────────────────
     st.markdown("---")
-    st.caption("**v6.0** · Desarrollado por")
+    st.caption("**v1.6** · Desarrollado por")
     st.markdown(
         "<small>Marc Mestres Mejias<br>"
         "<a href='mailto:m.mestres87@gmail.com'>m.mestres87@gmail.com</a></small>",
