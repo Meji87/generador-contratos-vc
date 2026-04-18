@@ -1,5 +1,5 @@
 """
-Generador de Contratos de Financiación v3
+Generador de Contratos de Financiación v4
 Streamlit app — plantilla Word con marcadores «» + Excel estructurado por producción
 Con sistema de login por contraseña via Streamlit Secrets
 """
@@ -11,13 +11,14 @@ import os
 import re
 import tempfile
 import hashlib
+import io
 from datetime import date, datetime
 from pathlib import Path
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="VCapital · Contratos",
-    page_icon="assets/favicon.ico",        # ICO en carpeta assets/
+    page_icon="assets/favicon.ico",
     layout="centered"
 )
 
@@ -26,7 +27,6 @@ st.set_page_config(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def check_password(password: str) -> bool:
-    """Check password against stored hash in Streamlit secrets."""
     try:
         stored_hash = st.secrets["auth"]["password_hash"]
         input_hash  = hashlib.sha256(password.encode()).hexdigest()
@@ -35,7 +35,6 @@ def check_password(password: str) -> bool:
         return False
 
 def login_screen():
-    # Logo centrado en login
     col_l, col_c, col_r = st.columns([1, 2, 1])
     with col_c:
         logo_path = Path("assets/logo_vcapital.png")
@@ -64,11 +63,14 @@ if not st.session_state["authenticated"]:
     login_screen()
     st.stop()
 
+# ── Inicializar historial de sesión ───────────────────────────────────────────
+if "historial" not in st.session_state:
+    st.session_state["historial"] = []
+
 # ══════════════════════════════════════════════════════════════════════════════
-# APP (only shown after login)
+# APP HEADER
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── Header: logo + título + botón salir ───────────────────────────────────────
 col_logo, col_title, col_logout = st.columns([1, 4, 1])
 with col_logo:
     logo_path = Path("assets/logo_vcapital.png")
@@ -90,7 +92,6 @@ st.divider()
 # ══════════════════════════════════════════════════════════════════════════════
 
 def replace_in_xml(xml: str, old: str, new: str) -> str:
-    """Replace `old` with `new` inside every <w:t>…</w:t> node."""
     new_xml = (str(new)
                .replace("&", "&amp;")
                .replace("<", "&lt;")
@@ -204,7 +205,8 @@ def build_replacements(prod: dict, cliente: dict, tipo: str) -> dict:
     return r
 
 
-def generate_contract(template_bytes: bytes, reps: dict) -> bytes:
+def generate_contract(template_bytes: bytes, reps: dict) -> tuple[bytes, list[str]]:
+    """Genera el contrato y devuelve (docx_bytes, marcadores_sin_sustituir)."""
     with tempfile.TemporaryDirectory() as tmp:
         tpl_path = os.path.join(tmp, "template.docx")
         out_path = os.path.join(tmp, "output.docx")
@@ -221,6 +223,9 @@ def generate_contract(template_bytes: bytes, reps: dict) -> bytes:
 
         xml = apply_replacements(xml, reps)
 
+        # ── Mejora 2: detectar marcadores sin sustituir ───────────────────────
+        sin_sustituir = sorted(set(re.findall(r"«[^»]+»", xml)))
+
         with open(doc_xml, "w", encoding="utf-8") as f:
             f.write(xml)
 
@@ -234,7 +239,15 @@ def generate_contract(template_bytes: bytes, reps: dict) -> bytes:
                     zout.write(fpath, arcname)
 
         with open(out_path, "rb") as f:
-            return f.read()
+            return f.read(), sin_sustituir
+
+
+def build_filename(prod_data: dict, cliente_dict: dict, tipo_sel: str) -> str:
+    nombre_f = (cliente_dict.get("nombre", "cliente") if tipo_sel == "PF"
+                else cliente_dict.get("nombre_empresa", "empresa")).replace(" ", "_")
+    fecha_f  = parse_fecha(cliente_dict.get("fecha", date.today())).strftime("%d_%m_%Y")
+    prod_f   = prod_data.get("nombre_produccion", "").replace(" ", "_").replace('"', "").replace("'", "")
+    return f"Contrato_{prod_f}_{nombre_f}_{fecha_f}.docx"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -299,11 +312,50 @@ def read_clientes_pj(xls: pd.ExcelFile) -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# HELPER — listar plantillas disponibles en carpeta plantillas/
+# MEJORA 3: Validación del Excel
+# ══════════════════════════════════════════════════════════════════════════════
+
+def validar_clientes_pf(df: pd.DataFrame) -> list[str]:
+    campos = {
+        "nombre": "Nombre", "dni": "DNI", "domicilio": "Domicilio",
+        "cp_localidad": "CP/Localidad", "importe_num": "Importe inversión (€)",
+        "importe_letras": "Importe inversión (letras)", "deduccion_num": "Importe deducción (€)",
+        "deduccion_letras": "Importe deducción (letras)", "fecha": "Fecha",
+    }
+    avisos = []
+    for i, row in df.iterrows():
+        nombre_c = str(row.get("nombre", f"Fila {i+1}"))
+        for campo, etiqueta in campos.items():
+            val = row.get(campo)
+            if pd.isna(val) or str(val).strip() in ("", "nan"):
+                avisos.append(f"👤 **{nombre_c}** — falta: {etiqueta}")
+    return avisos
+
+
+def validar_clientes_pj(df: pd.DataFrame) -> list[str]:
+    campos = {
+        "nombre_empresa": "Nombre empresa", "cif": "CIF",
+        "representante": "Representante", "dni_representante": "DNI representante",
+        "domicilio_empresa": "Domicilio", "cp_localidad_empresa": "CP/Localidad",
+        "importe_num": "Importe inversión (€)", "importe_letras": "Importe inversión (letras)",
+        "deduccion_num": "Importe deducción (€)", "deduccion_letras": "Importe deducción (letras)",
+        "fecha": "Fecha",
+    }
+    avisos = []
+    for i, row in df.iterrows():
+        empresa_c = str(row.get("nombre_empresa", f"Fila {i+1}"))
+        for campo, etiqueta in campos.items():
+            val = row.get(campo)
+            if pd.isna(val) or str(val).strip() in ("", "nan"):
+                avisos.append(f"🏢 **{empresa_c}** — falta: {etiqueta}")
+    return avisos
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HELPER — plantillas del repositorio
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_plantillas_disponibles() -> list[str]:
-    """Devuelve lista de nombres de .docx en la carpeta plantillas/."""
     plantillas_dir = Path("plantillas")
     if not plantillas_dir.exists():
         return []
@@ -311,7 +363,6 @@ def get_plantillas_disponibles() -> list[str]:
 
 
 def load_plantilla_bytes(nombre: str) -> bytes | None:
-    """Lee una plantilla de la carpeta plantillas/ y devuelve sus bytes."""
     path = Path("plantillas") / nombre
     if path.exists():
         return path.read_bytes()
@@ -319,30 +370,20 @@ def load_plantilla_bytes(nombre: str) -> bytes | None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# UI — Paso 1: Plantilla Word
+# UI — Paso 1: Plantilla Word + Paso 2: Excel
 # ══════════════════════════════════════════════════════════════════════════════
 
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("1️⃣ Plantilla Word")
-
     plantillas_disponibles = get_plantillas_disponibles()
 
     if plantillas_disponibles:
-        # Opciones: las plantillas del repo + opción de subir una propia
         opciones_plantilla = ["📁 Selecciona una plantilla…"] + plantillas_disponibles + ["⬆️ Subir plantilla propia…"]
-        seleccion_plantilla = st.selectbox(
-            "Elige la plantilla del contrato:",
-            opciones_plantilla,
-            key="sel_plantilla"
-        )
+        seleccion_plantilla = st.selectbox("Elige la plantilla del contrato:", opciones_plantilla, key="sel_plantilla")
         if seleccion_plantilla == "⬆️ Subir plantilla propia…":
-            template_file = st.file_uploader(
-                "Sube tu plantilla (.docx)",
-                type=["docx"],
-                key="template_upload"
-            )
+            template_file  = st.file_uploader("Sube tu plantilla (.docx)", type=["docx"], key="template_upload")
             template_bytes = template_file.read() if template_file else None
             template_name  = template_file.name if template_file else None
         elif seleccion_plantilla == "📁 Selecciona una plantilla…":
@@ -354,28 +395,19 @@ with col1:
             if template_bytes:
                 st.success(f"✅ Plantilla cargada: **{seleccion_plantilla}**")
     else:
-        # No hay plantillas en el repo → solo upload
-        st.caption("No hay plantillas guardadas en la carpeta `plantillas/`. Sube una manualmente.")
-        template_file  = st.file_uploader(
-            "Sube la plantilla del contrato (.docx)",
-            type=["docx"],
-            key="template_upload_fallback"
-        )
+        st.caption("No hay plantillas en la carpeta `plantillas/`. Sube una manualmente.")
+        template_file  = st.file_uploader("Sube la plantilla del contrato (.docx)", type=["docx"], key="template_upload_fallback")
         template_bytes = template_file.read() if template_file else None
         template_name  = template_file.name if template_file else None
 
 with col2:
     st.subheader("2️⃣ Excel de la producción")
-    excel_file = st.file_uploader(
-        "Sube el Excel de la producción (.xlsx)",
-        type=["xlsx"],
-        key="excel"
-    )
+    excel_file = st.file_uploader("Sube el Excel de la producción (.xlsx)", type=["xlsx"], key="excel")
 
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# UI — Paso 2 y 3: Datos del Excel y selección de cliente
+# UI — Lectura del Excel + Validación
 # ══════════════════════════════════════════════════════════════════════════════
 
 prod_data = None
@@ -397,10 +429,25 @@ if prod_data:
     c1.info(f"**Empresa:** {prod_data.get('nombre_empresa','—')}")
     c2.info(f"**Producción:** {prod_data.get('nombre_produccion','—')}")
     c3.info(f"**Banco:** {prod_data.get('entidad_bancaria','—')}")
+
+    # ── Mejora 3: Validación ──────────────────────────────────────────────────
+    avisos_pf = validar_clientes_pf(df_pf) if not df_pf.empty else []
+    avisos_pj = validar_clientes_pj(df_pj) if not df_pj.empty else []
+    todos_avisos = avisos_pf + avisos_pj
+    if todos_avisos:
+        with st.expander(f"⚠️ {len(todos_avisos)} campo(s) vacío(s) detectado(s) en el Excel — pulsa para ver", expanded=False):
+            for aviso in todos_avisos:
+                st.warning(aviso)
+    else:
+        st.success("✅ Excel validado. Todos los campos obligatorios están rellenos.")
+
     st.divider()
 
+# ══════════════════════════════════════════════════════════════════════════════
+# UI — Clientes y generación
+# ══════════════════════════════════════════════════════════════════════════════
+
 if prod_data and (not df_pf.empty or not df_pj.empty):
-    st.subheader("3️⃣ Selecciona el cliente")
 
     opciones = []
     if not df_pf.empty:
@@ -411,70 +458,207 @@ if prod_data and (not df_pf.empty or not df_pj.empty):
             opciones.append({"label": f"🏢 {row['nombre_empresa']} ({row['representante']})",
                              "tipo": "PJ", "idx": i})
 
-    sel_label = st.selectbox("Cliente:", [o["label"] for o in opciones])
-    sel = next(o for o in opciones if o["label"] == sel_label)
-
-    st.markdown("**Datos del cliente:**")
-    if sel["tipo"] == "PF":
-        row = df_pf.iloc[sel["idx"]]
-        c1, c2 = st.columns(2)
-        with c1:
-            st.info(f"**Nombre:** {row['nombre']}")
-            st.info(f"**DNI:** {row['dni']}")
-            st.info(f"**Domicilio:** {row['domicilio']}")
-            st.info(f"**CP / Localidad:** {row['cp_localidad']}")
-        with c2:
-            st.info(f"**Importe inversión:** {fmt_euros(row['importe_num'])} — {row['importe_letras']}")
-            st.info(f"**Importe deducción:** {fmt_euros(row['deduccion_num'])} — {row['deduccion_letras']}")
-            st.info(f"**Fecha contrato:** {row['fecha']}")
-        cliente_dict = row.to_dict()
-        tipo_sel = "PF"
-    else:
-        row = df_pj.iloc[sel["idx"]]
-        c1, c2 = st.columns(2)
-        with c1:
-            st.info(f"**Empresa:** {row['nombre_empresa']}")
-            st.info(f"**CIF:** {row['cif']}")
-            st.info(f"**Representante:** {row['representante']}")
-            st.info(f"**DNI rep.:** {row['dni_representante']}")
-            st.info(f"**Cargo:** {row['cargo_representante']}")
-        with c2:
-            st.info(f"**Domicilio:** {row['domicilio_empresa']}")
-            st.info(f"**CP / Localidad:** {row['cp_localidad_empresa']}")
-            st.info(f"**Importe inversión:** {fmt_euros(row['importe_num'])} — {row['importe_letras']}")
-            st.info(f"**Importe deducción:** {fmt_euros(row['deduccion_num'])} — {row['deduccion_letras']}")
-            st.info(f"**Fecha contrato:** {row['fecha']}")
-        cliente_dict = row.to_dict()
-        tipo_sel = "PJ"
-
-    st.divider()
-
     if template_bytes:
-        if st.button("⚡ Generar Contrato", type="primary", use_container_width=True):
-            with st.spinner("Generando contrato..."):
-                try:
-                    reps       = build_replacements(prod_data, cliente_dict, tipo_sel)
-                    docx_bytes = generate_contract(template_bytes, reps)
+        # ── Mejora 1: Tabs individual / lote ─────────────────────────────────
+        tab_individual, tab_lote = st.tabs(["📄 Contrato individual", "📦 Generar todos"])
 
-                    nombre_f = (cliente_dict.get("nombre","cliente") if tipo_sel == "PF"
-                                else cliente_dict.get("nombre_empresa","empresa")).replace(" ","_")
-                    fecha_f  = parse_fecha(cliente_dict.get("fecha", date.today())).strftime("%d_%m_%Y")
-                    prod_f   = prod_data.get("nombre_produccion","").replace(" ","_").replace('"',"").replace("'","")
-                    filename = f"Contrato_{prod_f}_{nombre_f}_{fecha_f}.docx"
+        # ─────────────────────────────────────────────────────────────────────
+        with tab_individual:
+            st.subheader("3️⃣ Selecciona el cliente")
+            sel_label = st.selectbox("Cliente:", [o["label"] for o in opciones])
+            sel = next(o for o in opciones if o["label"] == sel_label)
 
-                    st.success("✅ Contrato generado correctamente.")
-                    st.download_button(
-                        label="📥 Descargar Contrato (.docx)",
-                        data=docx_bytes,
-                        file_name=filename,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True
-                    )
-                except Exception as e:
-                    st.error(f"Error al generar el contrato: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
+            st.markdown("**Datos del cliente:**")
+            if sel["tipo"] == "PF":
+                row = df_pf.iloc[sel["idx"]]
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.info(f"**Nombre:** {row['nombre']}")
+                    st.info(f"**DNI:** {row['dni']}")
+                    st.info(f"**Domicilio:** {row['domicilio']}")
+                    st.info(f"**CP / Localidad:** {row['cp_localidad']}")
+                with c2:
+                    st.info(f"**Importe inversión:** {fmt_euros(row['importe_num'])} — {row['importe_letras']}")
+                    st.info(f"**Importe deducción:** {fmt_euros(row['deduccion_num'])} — {row['deduccion_letras']}")
+                    st.info(f"**Fecha contrato:** {row['fecha']}")
+                cliente_dict = row.to_dict()
+                tipo_sel = "PF"
+            else:
+                row = df_pj.iloc[sel["idx"]]
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.info(f"**Empresa:** {row['nombre_empresa']}")
+                    st.info(f"**CIF:** {row['cif']}")
+                    st.info(f"**Representante:** {row['representante']}")
+                    st.info(f"**DNI rep.:** {row['dni_representante']}")
+                    st.info(f"**Cargo:** {row['cargo_representante']}")
+                with c2:
+                    st.info(f"**Domicilio:** {row['domicilio_empresa']}")
+                    st.info(f"**CP / Localidad:** {row['cp_localidad_empresa']}")
+                    st.info(f"**Importe inversión:** {fmt_euros(row['importe_num'])} — {row['importe_letras']}")
+                    st.info(f"**Importe deducción:** {fmt_euros(row['deduccion_num'])} — {row['deduccion_letras']}")
+                    st.info(f"**Fecha contrato:** {row['fecha']}")
+                cliente_dict = row.to_dict()
+                tipo_sel = "PJ"
+
+            # ── Mejora 4: Vista previa de sustituciones ───────────────────────
+            reps_preview = build_replacements(prod_data, cliente_dict, tipo_sel)
+            with st.expander("🔍 Revisar valores antes de generar", expanded=False):
+                items = list(reps_preview.items())
+                mitad = len(items) // 2
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    for marcador, valor in items[:mitad]:
+                        st.markdown(f"`{marcador}` → **{valor}**")
+                with col_b:
+                    for marcador, valor in items[mitad:]:
+                        st.markdown(f"`{marcador}` → **{valor}**")
+
+            st.write("")
+            if st.button("⚡ Generar Contrato", type="primary", use_container_width=True, key="btn_individual"):
+                with st.spinner("Generando contrato..."):
+                    try:
+                        reps = build_replacements(prod_data, cliente_dict, tipo_sel)
+                        docx_bytes, sin_sustituir = generate_contract(template_bytes, reps)
+                        filename = build_filename(prod_data, cliente_dict, tipo_sel)
+
+                        # ── Mejora 2: Advertencia marcadores sin sustituir ────
+                        if sin_sustituir:
+                            st.warning(
+                                f"⚠️ {len(sin_sustituir)} marcador(es) sin sustituir: "
+                                f"{', '.join(sin_sustituir)}"
+                            )
+                        else:
+                            st.success("✅ Contrato generado. Todos los marcadores sustituidos.")
+
+                        # ── Mejora 5: Añadir al historial ─────────────────────
+                        nombre_cliente = (cliente_dict.get("nombre", "—") if tipo_sel == "PF"
+                                          else cliente_dict.get("nombre_empresa", "—"))
+                        st.session_state["historial"].append({
+                            "Hora": datetime.now().strftime("%H:%M:%S"),
+                            "Producción": prod_data.get("nombre_produccion", "—"),
+                            "Cliente": nombre_cliente,
+                            "Tipo": "Persona Física" if tipo_sel == "PF" else "Persona Jurídica",
+                            "Plantilla": template_name or "—",
+                            "Archivo": filename,
+                            "Marcadores sin sustituir": len(sin_sustituir),
+                        })
+
+                        st.download_button(
+                            label="📥 Descargar Contrato (.docx)",
+                            data=docx_bytes,
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True
+                        )
+                    except Exception as e:
+                        st.error(f"Error al generar el contrato: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+
+        # ─────────────────────────────────────────────────────────────────────
+        with tab_lote:
+            st.subheader("📦 Generar todos los contratos")
+            total = len(opciones)
+            st.info(
+                f"Se generarán **{total} contratos** "
+                f"({len(df_pf)} persona(s) física(s) + {len(df_pj)} persona(s) jurídica(s)) "
+                f"y se descargarán en un único archivo `.zip`."
+            )
+
+            if st.button(f"⚡ Generar los {total} contratos", type="primary", use_container_width=True, key="btn_lote"):
+                errores_lote  = []
+                archivos_zip  = {}
+                progress      = st.progress(0, text="Iniciando generación en lote…")
+
+                for i, opcion in enumerate(opciones):
+                    try:
+                        if opcion["tipo"] == "PF":
+                            cd = df_pf.iloc[opcion["idx"]].to_dict()
+                        else:
+                            cd = df_pj.iloc[opcion["idx"]].to_dict()
+
+                        reps_l              = build_replacements(prod_data, cd, opcion["tipo"])
+                        docx_bytes_l, ss_l  = generate_contract(template_bytes, reps_l)
+                        filename_l          = build_filename(prod_data, cd, opcion["tipo"])
+                        archivos_zip[filename_l] = docx_bytes_l
+
+                        nombre_c = (cd.get("nombre", "—") if opcion["tipo"] == "PF"
+                                    else cd.get("nombre_empresa", "—"))
+                        st.session_state["historial"].append({
+                            "Hora": datetime.now().strftime("%H:%M:%S"),
+                            "Producción": prod_data.get("nombre_produccion", "—"),
+                            "Cliente": nombre_c,
+                            "Tipo": "Persona Física" if opcion["tipo"] == "PF" else "Persona Jurídica",
+                            "Plantilla": template_name or "—",
+                            "Archivo": filename_l,
+                            "Marcadores sin sustituir": len(ss_l),
+                        })
+                    except Exception as e:
+                        errores_lote.append(f"{opcion['label']}: {e}")
+
+                    progress.progress((i + 1) / total, text=f"Generando {i+1}/{total}: {opcion['label']}")
+
+                progress.empty()
+
+                # Empaquetar en ZIP
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for nombre_doc, contenido in archivos_zip.items():
+                        zf.writestr(nombre_doc, contenido)
+                zip_buffer.seek(0)
+
+                prod_nombre  = prod_data.get("nombre_produccion", "produccion").replace(" ", "_")
+                zip_filename = f"Contratos_{prod_nombre}.zip"
+
+                if errores_lote:
+                    st.warning(f"⚠️ {len(errores_lote)} error(es) durante la generación:")
+                    for err in errores_lote:
+                        st.error(err)
+
+                st.success(f"✅ {len(archivos_zip)} contrato(s) generado(s) correctamente.")
+                st.download_button(
+                    label=f"📥 Descargar ZIP ({len(archivos_zip)} contratos)",
+                    data=zip_buffer,
+                    file_name=zip_filename,
+                    mime="application/zip",
+                    use_container_width=True
+                )
+
     else:
+        # Sin plantilla: mostrar datos del cliente igualmente
+        st.subheader("3️⃣ Selecciona el cliente")
+        sel_label = st.selectbox("Cliente:", [o["label"] for o in opciones])
+        sel = next(o for o in opciones if o["label"] == sel_label)
+
+        if sel["tipo"] == "PF":
+            row = df_pf.iloc[sel["idx"]]
+            c1, c2 = st.columns(2)
+            with c1:
+                st.info(f"**Nombre:** {row['nombre']}")
+                st.info(f"**DNI:** {row['dni']}")
+                st.info(f"**Domicilio:** {row['domicilio']}")
+                st.info(f"**CP / Localidad:** {row['cp_localidad']}")
+            with c2:
+                st.info(f"**Importe inversión:** {fmt_euros(row['importe_num'])} — {row['importe_letras']}")
+                st.info(f"**Importe deducción:** {fmt_euros(row['deduccion_num'])} — {row['deduccion_letras']}")
+                st.info(f"**Fecha contrato:** {row['fecha']}")
+        else:
+            row = df_pj.iloc[sel["idx"]]
+            c1, c2 = st.columns(2)
+            with c1:
+                st.info(f"**Empresa:** {row['nombre_empresa']}")
+                st.info(f"**CIF:** {row['cif']}")
+                st.info(f"**Representante:** {row['representante']}")
+                st.info(f"**DNI rep.:** {row['dni_representante']}")
+                st.info(f"**Cargo:** {row['cargo_representante']}")
+            with c2:
+                st.info(f"**Domicilio:** {row['domicilio_empresa']}")
+                st.info(f"**CP / Localidad:** {row['cp_localidad_empresa']}")
+                st.info(f"**Importe inversión:** {fmt_euros(row['importe_num'])} — {row['importe_letras']}")
+                st.info(f"**Importe deducción:** {fmt_euros(row['deduccion_num'])} — {row['deduccion_letras']}")
+                st.info(f"**Fecha contrato:** {row['fecha']}")
+
         st.info("⬆️ Selecciona o sube la plantilla Word para poder generar el contrato.")
 
 elif excel_file and not prod_data:
@@ -485,4 +669,21 @@ else:
     st.info("⬆️ Sube la plantilla Word y el Excel de la producción para comenzar.")
 
 st.divider()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Mejora 5: Historial de la sesión
+# ══════════════════════════════════════════════════════════════════════════════
+
+if st.session_state["historial"]:
+    with st.expander(f"📋 Historial de esta sesión — {len(st.session_state['historial'])} contrato(s) generado(s)", expanded=False):
+        df_hist = pd.DataFrame(st.session_state["historial"])
+        st.dataframe(df_hist, use_container_width=True, hide_index=True)
+        csv_hist = df_hist.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Descargar historial CSV",
+            data=csv_hist,
+            file_name=f"historial_contratos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv"
+        )
+
 st.caption("💡 Descarga la plantilla Excel vacía en la pestaña INSTRUCCIONES del propio fichero.")
