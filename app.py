@@ -1,6 +1,7 @@
 """
 Generador de Contratos de Financiación v2
 Streamlit app — plantilla Word con marcadores «» + Excel estructurado por producción
+Con sistema de login por contraseña via Streamlit Secrets
 """
 
 import streamlit as st
@@ -9,6 +10,7 @@ import zipfile
 import os
 import re
 import tempfile
+import hashlib
 from datetime import date, datetime
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -18,7 +20,59 @@ st.set_page_config(
     layout="centered"
 )
 
-st.title("📄 Generador de Contratos de Financiación")
+# ══════════════════════════════════════════════════════════════════════════════
+# LOGIN
+# ══════════════════════════════════════════════════════════════════════════════
+
+def check_password(password: str) -> bool:
+    """Check password against stored hash in Streamlit secrets."""
+    try:
+        stored_hash = st.secrets["auth"]["password_hash"]
+        input_hash  = hashlib.sha256(password.encode()).hexdigest()
+        return input_hash == stored_hash
+    except Exception:
+        return False
+
+def login_screen():
+    st.title("🔐 Acceso Restringido")
+    st.markdown("Esta aplicación es de uso privado. Introduce la contraseña para continuar.")
+    st.divider()
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        password = st.text_input("Contraseña", type="password", key="pwd_input")
+        if st.button("Entrar", type="primary", use_container_width=True):
+            if check_password(password):
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("❌ Contraseña incorrecta. Inténtalo de nuevo.")
+
+def logout():
+    st.session_state["authenticated"] = False
+    st.rerun()
+
+# ── Auth gate ─────────────────────────────────────────────────────────────────
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    login_screen()
+    st.stop()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# APP (only shown after login)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Header with logout button
+col_title, col_logout = st.columns([5, 1])
+with col_title:
+    st.title("📄 Generador de Contratos de Financiación")
+with col_logout:
+    st.write("")
+    if st.button("🚪 Salir"):
+        logout()
+
 st.markdown("Genera contratos Word rellenos automáticamente a partir de la plantilla y el Excel de la producción.")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -58,7 +112,6 @@ def apply_replacements(xml: str, reps: dict) -> str:
 
 
 def fmt_euros(n) -> str:
-    """Format number as Spanish euro string: 5.000€"""
     try:
         return f"{int(n):,}€".replace(",", ".")
     except Exception:
@@ -71,7 +124,6 @@ def nombre_mes(n: int) -> str:
 
 
 def parse_fecha(val) -> date:
-    """Try to parse a cell value into a date object."""
     if isinstance(val, (datetime, date)):
         return val if isinstance(val, date) else val.date()
     s = str(val).strip()
@@ -88,36 +140,25 @@ def parse_fecha(val) -> date:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_replacements(prod: dict, cliente: dict, tipo: str) -> dict:
-    """
-    Build the full {marker: value} dict for one contract.
-    prod   — row from PRODUCTORA sheet (dict)
-    cliente — row from PERSONAS_FISICAS or PERSONAS_JURIDICAS (dict)
-    tipo   — 'PF' | 'PJ'
-    """
     fecha = parse_fecha(cliente.get("fecha", date.today()))
     r = {}
 
-    # ── Fecha ──
     r["«DIA»"]  = f"{fecha.day:02d}"
     r["«MES»"]  = nombre_mes(fecha.month)
     r["«ANYO»"] = str(fecha.year)
 
-    # ── Productora ──
-    r["«PROD_REPRESENTANTE»"]    = str(prod.get("representante", "")).upper()
-    r["«PROD_DNI»"]              = str(prod.get("dni_representante", ""))
-    r["«PROD_DOMICILIO»"]        = str(prod.get("domicilio_representante", ""))
-    r["«PROD_CP_LOCALIDAD»"]     = str(prod.get("cp_localidad_representante", ""))
-    r["«PROD_NOMBRE_EMPRESA»"]   = str(prod.get("nombre_empresa", "")).upper()
-    r["«PROD_CIF»"]              = str(prod.get("cif", ""))
-    r["«PROD_DOMICILIO_EMPRESA»"]= str(prod.get("domicilio_empresa", ""))
-    r["«PROD_CP_EMPRESA»"]       = str(prod.get("cp_localidad_empresa", ""))
-    r["«ENTIDAD_BANCARIA»"]      = str(prod.get("entidad_bancaria", ""))
-    r["«IBAN»"]                  = str(prod.get("iban", ""))
-    r["«NOMBRE_PRODUCCION»"]     = str(prod.get("nombre_produccion", ""))
-
-    # ── Firmas ──
-    r["«PRODUCTORA»"]            = str(prod.get("nombre_empresa", "")).upper()
-    r["«PROD_REPRESENTANTE»"]    = str(prod.get("representante", "")).upper()  # duplicate OK
+    r["«PROD_REPRESENTANTE»"]     = str(prod.get("representante", "")).upper()
+    r["«PROD_DNI»"]               = str(prod.get("dni_representante", ""))
+    r["«PROD_DOMICILIO»"]         = str(prod.get("domicilio_representante", ""))
+    r["«PROD_CP_LOCALIDAD»"]      = str(prod.get("cp_localidad_representante", ""))
+    r["«PROD_NOMBRE_EMPRESA»"]    = str(prod.get("nombre_empresa", "")).upper()
+    r["«PROD_CIF»"]               = str(prod.get("cif", ""))
+    r["«PROD_DOMICILIO_EMPRESA»"] = str(prod.get("domicilio_empresa", ""))
+    r["«PROD_CP_EMPRESA»"]        = str(prod.get("cp_localidad_empresa", ""))
+    r["«ENTIDAD_BANCARIA»"]       = str(prod.get("entidad_bancaria", ""))
+    r["«IBAN»"]                   = str(prod.get("iban", ""))
+    r["«NOMBRE_PRODUCCION»"]      = str(prod.get("nombre_produccion", ""))
+    r["«PRODUCTORA»"]             = str(prod.get("nombre_empresa", "")).upper()
 
     if tipo == "PF":
         nombre = str(cliente.get("nombre", "")).upper()
@@ -125,8 +166,8 @@ def build_replacements(prod: dict, cliente: dict, tipo: str) -> dict:
         r["«DNI»"]                   = str(cliente.get("dni", ""))
         r["«DOMICILIO»"]             = str(cliente.get("domicilio", ""))
         r["«CP_Y_LOCALIDAD»"]        = str(cliente.get("cp_localidad", ""))
-        r["«CIF»"]                   = ""          # no CIF for PF
-        r["«NOMBRE_EMPRESA»"]        = nombre      # PF = name in empresa field
+        r["«CIF»"]                   = ""
+        r["«NOMBRE_EMPRESA»"]        = nombre
         r["«IMPORTE_EN_LETRAS»"]     = str(cliente.get("importe_letras", "")).upper()
         r["«IMP_NUMERO»"]            = fmt_euros(cliente.get("importe_num", 0))
         r["«IMPORTE_LETRAS__BASE»"]  = str(cliente.get("deduccion_letras", "")).upper()
@@ -135,7 +176,7 @@ def build_replacements(prod: dict, cliente: dict, tipo: str) -> dict:
         r["«FIN_REPRESENTANTE»"]     = nombre
 
     elif tipo == "PJ":
-        rep    = str(cliente.get("representante", "")).upper()
+        rep     = str(cliente.get("representante", "")).upper()
         empresa = str(cliente.get("nombre_empresa", "")).upper()
         r["«NOMBRE_Y_APELLIDOS_PF»"] = rep
         r["«DNI»"]                   = str(cliente.get("dni_representante", ""))
@@ -154,7 +195,6 @@ def build_replacements(prod: dict, cliente: dict, tipo: str) -> dict:
 
 
 def generate_contract(template_bytes: bytes, reps: dict) -> bytes:
-    """Fill template .docx with replacements and return filled .docx bytes."""
     with tempfile.TemporaryDirectory() as tmp:
         tpl_path = os.path.join(tmp, "template.docx")
         out_path = os.path.join(tmp, "output.docx")
@@ -192,31 +232,25 @@ def generate_contract(template_bytes: bytes, reps: dict) -> bytes:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def read_productora(xls: pd.ExcelFile) -> dict | None:
-    """Read the single PRODUCTORA row."""
     try:
         df = pd.read_excel(xls, sheet_name="PRODUCTORA", header=1)
-        df = df.dropna(how="all")
-        # Skip example rows (row index 0 = row 3 in Excel = example)
-        # Data starts at row index 1 (row 4 in Excel)
-        df = df.iloc[1:].reset_index(drop=True)
-        df = df.dropna(how="all")
+        df = df.dropna(how="all").iloc[1:].reset_index(drop=True).dropna(how="all")
         if df.empty:
             return None
         row = df.iloc[0]
-        cols = df.columns.tolist()
         return {
-            "representante":             str(row.iloc[0]) if pd.notna(row.iloc[0]) else "",
-            "dni_representante":         str(row.iloc[1]) if pd.notna(row.iloc[1]) else "",
-            "cargo_representante":       str(row.iloc[2]) if pd.notna(row.iloc[2]) else "Administrador único",
-            "domicilio_representante":   str(row.iloc[3]) if pd.notna(row.iloc[3]) else "",
-            "cp_localidad_representante":str(row.iloc[4]) if pd.notna(row.iloc[4]) else "",
-            "nombre_empresa":            str(row.iloc[5]) if pd.notna(row.iloc[5]) else "",
-            "cif":                       str(row.iloc[6]) if pd.notna(row.iloc[6]) else "",
-            "domicilio_empresa":         str(row.iloc[7]) if pd.notna(row.iloc[7]) else "",
-            "cp_localidad_empresa":      str(row.iloc[8]) if pd.notna(row.iloc[8]) else "",
-            "nombre_produccion":         str(row.iloc[9]) if pd.notna(row.iloc[9]) else "",
-            "entidad_bancaria":          str(row.iloc[10]) if pd.notna(row.iloc[10]) else "",
-            "iban":                      str(row.iloc[11]) if pd.notna(row.iloc[11]) else "",
+            "representante":              str(row.iloc[0]) if pd.notna(row.iloc[0]) else "",
+            "dni_representante":          str(row.iloc[1]) if pd.notna(row.iloc[1]) else "",
+            "cargo_representante":        str(row.iloc[2]) if pd.notna(row.iloc[2]) else "Administrador único",
+            "domicilio_representante":    str(row.iloc[3]) if pd.notna(row.iloc[3]) else "",
+            "cp_localidad_representante": str(row.iloc[4]) if pd.notna(row.iloc[4]) else "",
+            "nombre_empresa":             str(row.iloc[5]) if pd.notna(row.iloc[5]) else "",
+            "cif":                        str(row.iloc[6]) if pd.notna(row.iloc[6]) else "",
+            "domicilio_empresa":          str(row.iloc[7]) if pd.notna(row.iloc[7]) else "",
+            "cp_localidad_empresa":       str(row.iloc[8]) if pd.notna(row.iloc[8]) else "",
+            "nombre_produccion":          str(row.iloc[9]) if pd.notna(row.iloc[9]) else "",
+            "entidad_bancaria":           str(row.iloc[10]) if pd.notna(row.iloc[10]) else "",
+            "iban":                       str(row.iloc[11]) if pd.notna(row.iloc[11]) else "",
         }
     except Exception as e:
         st.error(f"Error leyendo hoja PRODUCTORA: {e}")
@@ -226,9 +260,8 @@ def read_productora(xls: pd.ExcelFile) -> dict | None:
 def read_clientes_pf(xls: pd.ExcelFile) -> pd.DataFrame:
     try:
         df = pd.read_excel(xls, sheet_name="PERSONAS_FISICAS", header=1)
-        df = df.iloc[1:].reset_index(drop=True)  # skip example row
-        df = df[df.iloc[:,0].notna()]
-        df = df[~df.iloc[:,0].astype(str).str.startswith("ℹ️")]
+        df = df.iloc[1:].reset_index(drop=True)
+        df = df[df.iloc[:,0].notna() & ~df.iloc[:,0].astype(str).str.startswith("ℹ️")]
         df = df.reset_index(drop=True)
         df.columns = ["nombre","dni","domicilio","cp_localidad",
                       "importe_num","importe_letras",
@@ -242,9 +275,8 @@ def read_clientes_pf(xls: pd.ExcelFile) -> pd.DataFrame:
 def read_clientes_pj(xls: pd.ExcelFile) -> pd.DataFrame:
     try:
         df = pd.read_excel(xls, sheet_name="PERSONAS_JURIDICAS", header=1)
-        df = df.iloc[1:].reset_index(drop=True)  # skip example row
-        df = df[df.iloc[:,0].notna()]
-        df = df[~df.iloc[:,0].astype(str).str.startswith("ℹ️")]
+        df = df.iloc[1:].reset_index(drop=True)
+        df = df[df.iloc[:,0].notna() & ~df.iloc[:,0].astype(str).str.startswith("ℹ️")]
         df = df.reset_index(drop=True)
         df.columns = ["representante","dni_representante","cargo_representante",
                       "nombre_empresa","cif","domicilio_empresa","cp_localidad_empresa",
@@ -272,9 +304,9 @@ with col2:
 
 st.divider()
 
-prod_data     = None
-df_pf         = pd.DataFrame()
-df_pj         = pd.DataFrame()
+prod_data = None
+df_pf     = pd.DataFrame()
+df_pj     = pd.DataFrame()
 
 if excel_file:
     try:
@@ -285,7 +317,6 @@ if excel_file:
     except Exception as e:
         st.error(f"Error al leer el Excel: {e}")
 
-# ── Show productora summary ───────────────────────────────────────────────────
 if prod_data:
     st.subheader("🎬 Productora detectada")
     c1, c2, c3 = st.columns(3)
@@ -294,27 +325,21 @@ if prod_data:
     c3.info(f"**Banco:** {prod_data.get('entidad_bancaria','—')}")
     st.divider()
 
-# ── Client selector ───────────────────────────────────────────────────────────
 if prod_data and (not df_pf.empty or not df_pj.empty):
     st.subheader("3️⃣ Selecciona el cliente")
 
-    # Build unified list
     opciones = []
     if not df_pf.empty:
         for i, row in df_pf.iterrows():
-            nombre = str(row["nombre"])
-            opciones.append({"label": f"👤 {nombre}", "tipo": "PF", "idx": i})
+            opciones.append({"label": f"👤 {row['nombre']}", "tipo": "PF", "idx": i})
     if not df_pj.empty:
         for i, row in df_pj.iterrows():
-            empresa = str(row["nombre_empresa"])
-            rep     = str(row["representante"])
-            opciones.append({"label": f"🏢 {empresa} ({rep})", "tipo": "PJ", "idx": i})
+            opciones.append({"label": f"🏢 {row['nombre_empresa']} ({row['representante']})",
+                             "tipo": "PJ", "idx": i})
 
-    labels = [o["label"] for o in opciones]
-    sel_label = st.selectbox("Cliente:", labels)
+    sel_label = st.selectbox("Cliente:", [o["label"] for o in opciones])
     sel = next(o for o in opciones if o["label"] == sel_label)
 
-    # Preview selected client
     st.markdown("**Datos del cliente:**")
     if sel["tipo"] == "PF":
         row = df_pf.iloc[sel["idx"]]
@@ -330,7 +355,6 @@ if prod_data and (not df_pf.empty or not df_pj.empty):
             st.info(f"**Fecha contrato:** {row['fecha']}")
         cliente_dict = row.to_dict()
         tipo_sel = "PF"
-
     else:
         row = df_pj.iloc[sel["idx"]]
         c1, c2 = st.columns(2)
@@ -351,25 +375,18 @@ if prod_data and (not df_pf.empty or not df_pj.empty):
 
     st.divider()
 
-    # ── Generate button ───────────────────────────────────────────────────────
     if template_file:
         if st.button("⚡ Generar Contrato", type="primary", use_container_width=True):
             with st.spinner("Generando contrato..."):
                 try:
-                    template_bytes = template_file.read()
-                    reps = build_replacements(prod_data, cliente_dict, tipo_sel)
-                    docx_bytes = generate_contract(template_bytes, reps)
+                    reps       = build_replacements(prod_data, cliente_dict, tipo_sel)
+                    docx_bytes = generate_contract(template_file.read(), reps)
 
-                    # Filename
-                    if tipo_sel == "PF":
-                        nombre_f = cliente_dict.get("nombre", "cliente").replace(" ", "_")
-                    else:
-                        nombre_f = cliente_dict.get("nombre_empresa", "empresa").replace(" ", "_")
-
-                    fecha_obj = parse_fecha(cliente_dict.get("fecha", date.today()))
-                    fecha_f   = fecha_obj.strftime("%d_%m_%Y")
-                    prod_f    = prod_data.get("nombre_produccion", "").replace(" ", "_").replace('"',"").replace("'","")
-                    filename  = f"Contrato_{prod_f}_{nombre_f}_{fecha_f}.docx"
+                    nombre_f = (cliente_dict.get("nombre","cliente") if tipo_sel == "PF"
+                                else cliente_dict.get("nombre_empresa","empresa")).replace(" ","_")
+                    fecha_f  = parse_fecha(cliente_dict.get("fecha", date.today())).strftime("%d_%m_%Y")
+                    prod_f   = prod_data.get("nombre_produccion","").replace(" ","_").replace('"',"").replace("'","")
+                    filename = f"Contrato_{prod_f}_{nombre_f}_{fecha_f}.docx"
 
                     st.success("✅ Contrato generado correctamente.")
                     st.download_button(
@@ -388,13 +405,10 @@ if prod_data and (not df_pf.empty or not df_pj.empty):
 
 elif excel_file and not prod_data:
     st.warning("No se encontraron datos en la hoja PRODUCTORA. Revisa que la fila 4 esté rellena.")
-
 elif excel_file and df_pf.empty and df_pj.empty:
-    st.warning("No hay clientes en el Excel. Añade filas en la hoja PERSONAS_FISICAS o PERSONAS_JURIDICAS.")
-
+    st.warning("No hay clientes en el Excel. Añade filas en PERSONAS_FISICAS o PERSONAS_JURIDICAS.")
 else:
     st.info("⬆️ Sube la plantilla Word y el Excel de la producción para comenzar.")
 
-# ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
 st.caption("💡 Descarga la plantilla Excel vacía en la pestaña INSTRUCCIONES del propio fichero.")
